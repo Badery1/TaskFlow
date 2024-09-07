@@ -4,7 +4,7 @@ from .models import User, Task
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import create_access_token
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 bcrypt = Bcrypt(app)
 
@@ -58,29 +58,51 @@ def login():
 @app.route('/api/tasks', methods=['POST'])
 @jwt_required()
 def create_task():
+    user_id = get_jwt_identity()
     data = request.get_json()
 
-    if not data or 'title' not in data:
-        return jsonify({"message": "Title is required"}), 400
+    title = data['title']
+    description = data.get('description', '')
+    frequency = data.get('frequency', 'one-off')
+    custom_frequency_days = data.get('custom_frequency_days')
+
+    # Ensure start_date is a proper datetime object
+    start_date_str = data.get('start_date', None)
+    if start_date_str:
+        try:
+            # Parse the string into a datetime object
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+        except ValueError:
+            return jsonify({"message": "Invalid start date format. Use YYYY-MM-DD."}), 400
+    else:
+        start_date = datetime.now(timezone.utc)  # Default to current datetime if none is provided
 
     new_task = Task(
-        title=data['title'],
-        description=data.get('description', ''),
-        frequency=data.get('frequency', 'one-off'),
-        user_id=get_jwt_identity()
+        title=title,
+        description=description,
+        frequency=frequency,
+        custom_frequency_days=custom_frequency_days,
+        start_date=start_date,
+        user_id=user_id
     )
+
+    # Only set do_next_by for recurring tasks (like daily or custom), not for weekly tasks at creation
+    if frequency == 'daily':
+        new_task.do_next_by = start_date + timedelta(days=1)
+    elif frequency == 'custom' and custom_frequency_days:
+        new_task.do_next_by = start_date + timedelta(days=custom_frequency_days)
+
     db.session.add(new_task)
     db.session.commit()
 
     return jsonify({
-        'id': new_task.id,
-        'title': new_task.title,
-        'description': new_task.description,
-        'completed': new_task.completed,
-        'frequency': new_task.frequency
-    }), 201
+        'message': 'Task created',
+        'task': new_task.id,
+        'do_next_by': new_task.do_next_by.strftime('%Y-%m-%d') if new_task.do_next_by else None,
+        'start_date': new_task.start_date.strftime('%Y-%m-%d')
+    })
 
-# Mark a task as completed for the current period (e.g., daily task completed today)
+# Mark a task as completed for the current period
 @app.route('/api/tasks/<int:task_id>/complete', methods=['POST'])
 @jwt_required()
 def complete_task(task_id):
@@ -90,21 +112,31 @@ def complete_task(task_id):
     if not task:
         return jsonify({'message': 'Task not found'}), 404
 
+    current_time = datetime.now(timezone.utc)
+
+    # Set last_completed for all task types
+    task.last_completed = current_time
+
     if task.frequency == 'one-off':
         task.completed = True
     else:
-        task.last_completed = datetime.now()
+        # Simplified logic for weekly and custom frequencies
+        if task.frequency == 'daily':
+            task.do_next_by = task.do_next_by + timedelta(days=1) if task.do_next_by else current_time + timedelta(days=1)
+        elif task.frequency == 'weekly':
+            task.do_next_by = task.do_next_by + timedelta(days=7) if task.do_next_by else current_time + timedelta(days=7)
+        elif task.frequency == 'custom' and task.custom_frequency_days:
+            task.do_next_by = task.do_next_by + timedelta(days=task.custom_frequency_days) if task.do_next_by else current_time + timedelta(days=task.custom_frequency_days)
 
     db.session.commit()
 
+    # Make sure to always return do_next_by
     return jsonify({
-        'id': task.id,
-        'title': task.title,
-        'description': task.description,
-        'completed': task.completed,
-        'frequency': task.frequency,
-        'last_completed': task.last_completed
-    }), 200
+        'message': 'Task completed',
+        'task': task.id,
+        'last_completed': task.last_completed.strftime('%Y-%m-%d') if task.last_completed else None,
+        'do_next_by': task.do_next_by.strftime('%Y-%m-%d') if task.do_next_by else None  # Ensure do_next_by is returned
+    })
 
 # Get all tasks for the logged-in user
 @app.route('/api/tasks', methods=['GET'])
@@ -117,7 +149,10 @@ def get_tasks():
         'id': task.id,
         'title': task.title,
         'description': task.description,
-        'completed': task.completed
+        'completed': task.completed,
+        'start_date': task.start_date.strftime('%Y-%m-%d'),  # Include start date
+        'do_next_by': task.do_next_by.strftime('%Y-%m-%d') if task.do_next_by else None,  # Include do_next_by if present
+        'frequency': task.frequency
     } for task in tasks]), 200
 
 
