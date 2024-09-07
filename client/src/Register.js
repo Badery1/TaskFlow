@@ -1,32 +1,30 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
 
-const Login = ({ handleLogin }) => {
+const Register = () => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [message, setMessage] = useState('');
-    const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         try {
-            const response = await axios.post('/api/login', { username, password });
-            const token = response.data.access_token;
-            localStorage.setItem('token', token);  // Store the JWT token in localStorage
-
-            handleLogin();  // Update authentication state
-
-            setMessage('Login successful!');
-            navigate('/dashboard');  // Redirect to the dashboard
+            const response = await axios.post('/api/register', { username, password });
+            if (response.status === 201) {
+                setMessage('Registration successful! Please log in.');
+            }
         } catch (error) {
-            setMessage('Login failed. Please try again.');
+            if (error.response && error.response.status === 400) {
+                setMessage('Registration failed. Username may already exist.');
+            } else {
+                setMessage('Registration failed. Please try again.');
+            }
         }
     };
 
     return (
         <div>
-            <h2>Login</h2>
+            <h2>Register</h2>
             <form onSubmit={handleSubmit}>
                 <div>
                     <label>Username</label>
@@ -46,11 +44,11 @@ const Login = ({ handleLogin }) => {
                         required
                     />
                 </div>
-                <button type="submit">Login</button>
+                <button type="submit">Register</button>
             </form>
             {message && <p>{message}</p>}
         </div>
     );
 };
 
-export default Login;
+export default Register;

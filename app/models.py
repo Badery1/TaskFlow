@@ -9,9 +9,19 @@ class User(db.Model):
 
 class Task(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(200), nullable=False)
-    description = db.Column(db.Text, nullable=True)
-    due_date = db.Column(db.DateTime, nullable=True)
+    title = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.String(200))
     completed = db.Column(db.Boolean, default=False)
+    frequency = db.Column(db.String(20), default='one-off')
+    last_completed = db.Column(db.DateTime)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def is_due(self):
+        """Determine if the task is due based on its frequency."""
+        if self.frequency == 'one-off':
+            return not self.completed
+        elif self.frequency == 'daily':
+            return not self.last_completed or self.last_completed.date() < datetime.now().date()
+        elif self.frequency == 'weekly':
+            return not self.last_completed or (datetime.now() - self.last_completed).days >= 7
+        return False
